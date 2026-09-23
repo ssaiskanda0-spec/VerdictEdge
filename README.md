@@ -18,11 +18,13 @@ VerdictEdge is a 100% offline, privacy-first mobile application designed to anal
 
 ## ▶ Live Demo
 
+## ▶ Live Demo
+
 <p align="center">
   <img src="docs/demo.gif" width="320" alt="VerdictEdge Live Demo" />
 </p>
 
-
+> *Note: Actual app performance is much faster and smoother than pictured above—the GIF frame rate was reduced to fit GitHub file size limits.*
 ---
 
 ## ◈ Key Features
