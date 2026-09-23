@@ -53,8 +53,9 @@ Due to GitHub's file size restrictions (>100MB per file), the Gemma 2B model bin
    `git clone https://github.com/ssaiskanda0-spec/VerdictEdge.git`
 
 2. **Download Model File:**  
-   Download the MediaPipe-compatible Gemma 2B quantized task file:  
-   [DOWNLOAD GEMMA 2B MODEL HERE](https://drive.google.com/your-drive-link-here)
+   Download the MediaPipe-compatible Gemma 2B quantized task file (`gemma-2b-it-gpu-int4`):  
+   * **Option A (Direct Mirror):** [DOWNLOAD VIA MEGA](https://mega.nz/file/your-file-link-here)  
+   * **Option B (Official Kaggle):** [DOWNLOAD VIA KAGGLE](https://www.kaggle.com/models/google/gemma/tfLite) *(Select `gemma-2b-it-gpu-int4`)*
 
 3. **Place Asset File:**  
    Move the downloaded file into your Android project folder under:  
