@@ -6,11 +6,30 @@ VerdictEdge is a 100% offline, privacy-first mobile application designed to anal
 
 ---
 
-## ❖ App Screenshots & Risk Matrix
+##
 
-| Home / Ingestion | Low Risk (Clear) | Medium Risk (Warning) | High Risk (Critical) |
-| :---: | :---: | :---: | :---: |
-| ![Home Screen](docs/screenshots/home.png) | ![Low Risk](docs/screenshots/low_risk.png) | ![Medium Risk](docs/screenshots/medium_risk.png) | ![High Risk](docs/screenshots/high_risk.png) |
+<h3 align="center">📱 Application Screenshots</h3>
+
+<table align="center">
+  <tr>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/home.png" width="210" height="450" alt="Home Screen" /><br />
+      <sub><b>01. Home Screen</b></sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/low_risk.png" width="210" height="450" alt="Low Risk Verdict" /><br />
+      <sub><b>02. Low Risk</b></sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/medium_risk.png" width="210" height="450" alt="Moderate Risk Verdict" /><br />
+      <sub><b>03. Moderate Risk</b></sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/high_risk.png" width="210" height="450" alt="High Risk Verdict" /><br />
+      <sub><b>04. High Risk</b></sub>
+    </td>
+  </tr>
+</table>
 
 
 ---
