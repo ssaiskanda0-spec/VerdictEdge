@@ -1,7 +1,6 @@
 # VerdictEdge // On-Device Legal AI
 
 > **Air-Gapped On-Device Legal Contract Analysis Engine**  
-> *Track 1 Submission: Sovereign AI*
 
 VerdictEdge is a 100% offline, privacy-first mobile application designed to analyze complex contracts, non-disclosure agreements (NDAs), and legal documents directly on-device. Built for modern high-security environments, VerdictEdge eliminates third-party cloud data leaks by executing all optical character recognition (OCR) and large language model (LLM) reasoning locally on the smartphone's NPU/GPU.
 
