@@ -18,7 +18,9 @@ VerdictEdge is a 100% offline, privacy-first mobile application designed to anal
 
 ## ▶ Live Demo
 
-![VerdictEdge Demo](docs/demo.gif)
+<p align="center">
+  <img src="docs/demo.gif" width="320" alt="VerdictEdge Live Demo" />
+</p>
 
 
 ---
