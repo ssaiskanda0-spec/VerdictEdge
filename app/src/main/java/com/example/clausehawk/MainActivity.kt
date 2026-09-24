@@ -1,17 +1,12 @@
 package com.example.clausehawk
 
-import android.Manifest
-import android.app.Activity
-import android.content.Context
-import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -27,633 +22,584 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
-import androidx.core.view.WindowCompat
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.File
 
 enum class AppState {
-    INIT_LOADING,
     INPUT,
-    PROCESSING_LOADING,
+    ANALYZING,
     RESULTS
 }
 
-private fun createTempImageUri(context: Context): Uri {
-    val tempFile = File.createTempFile("scan_doc_", ".jpg", context.cacheDir).apply {
-        createNewFile()
-        deleteOnExit()
-    }
-    return FileProvider.getUriForFile(
-        context,
-        "${context.packageName}.fileprovider",
-        tempFile
-    )
-}
-
 class MainActivity : ComponentActivity() {
+    private val contractEngine = ContractEngine()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MonochromeTheme {
-                ClauseHawkApp()
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    background = Color.Black,
+                    surface = Color(0xFF101010)
+                )
+            ) {
+                ClauseHawkApp(contractEngine = contractEngine)
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ClauseHawkApp() {
+fun ClauseHawkApp(contractEngine: ContractEngine) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
     val ocrManager = remember { OcrManager(context) }
-    val contractEngine = remember { ContractEngine() }
 
-    var appState by remember { mutableStateOf(AppState.INIT_LOADING) }
+    var appState by remember { mutableStateOf(AppState.INPUT) }
     var contractText by remember { mutableStateOf("") }
     var analysisResult by remember { mutableStateOf<AnalysisResult?>(null) }
-    var isOcrExtracting by remember { mutableStateOf(false) }
+    var selectedLanguage by remember { mutableStateOf(AppLanguage.ENGLISH) }
+    var isOcrLoading by remember { mutableStateOf(false) }
 
-    var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    val scope = rememberCoroutineScope()
 
-    // Full-Resolution Camera Capture Launcher
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            isOcrLoading = true
+            ocrManager.processImageFromUri(
+                uri = it,
+                language = selectedLanguage,
+                onSuccess = { extractedText ->
+                    contractText = extractedText
+                    isOcrLoading = false
+                },
+                onFailure = {
+                    isOcrLoading = false
+                }
+            )
+        }
+    }
+
     val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success && tempPhotoUri != null) {
-            isOcrExtracting = true
-            ocrManager.processImageFromUri(
-                uri = tempPhotoUri!!,
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap: Bitmap? ->
+        bitmap?.let {
+            isOcrLoading = true
+            ocrManager.processImageFromBitmap(
+                bitmap = it,
+                language = selectedLanguage,
                 onSuccess = { extractedText ->
-                    isOcrExtracting = false
-                    if (extractedText.isNotBlank()) {
-                        contractText = extractedText
-                    } else {
-                        Toast.makeText(context, "No text detected in photo", Toast.LENGTH_SHORT).show()
-                    }
+                    contractText = extractedText
+                    isOcrLoading = false
                 },
-                onError = {
-                    isOcrExtracting = false
-                    Toast.makeText(context, "OCR failed to read photo", Toast.LENGTH_SHORT).show()
+                onFailure = {
+                    isOcrLoading = false
                 }
             )
         }
     }
 
-    val launchFullResCamera = {
-        try {
-            val uri = createTempImageUri(context)
-            tempPhotoUri = uri
-            cameraLauncher.launch(uri)
-        } catch (e: Exception) {
-            Toast.makeText(context, "Failed to launch camera app", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // Permission Launcher for Camera
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            launchFullResCamera()
-        } else {
-            Toast.makeText(context, "Camera permission is required to scan documents", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // Gallery Photo Launcher
-    val galleryLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            isOcrExtracting = true
-            ocrManager.processImageFromUri(
-                uri = uri,
-                onSuccess = { extractedText ->
-                    isOcrExtracting = false
-                    if (extractedText.isNotBlank()) {
-                        contractText = extractedText
-                    } else {
-                        Toast.makeText(context, "No text detected in selected document", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onError = {
-                    isOcrExtracting = false
-                    Toast.makeText(context, "OCR failed to read image", Toast.LENGTH_SHORT).show()
-                }
-            )
-        }
-    }
-
-    // Screen 1: App Launch Initialization
-    if (appState == AppState.INIT_LOADING) {
-        LaunchedEffect(Unit) {
-            delay(2000L)
-            appState = AppState.INPUT
-        }
-
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = Color.Black
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(36.dp),
-                    color = Color.White,
-                    strokeWidth = 2.5.dp
-                )
-
-                Spacer(modifier = Modifier.height(28.dp))
-
-                Text(
-                    text = "Gemma 2B Initialized",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    letterSpacing = (-0.5).sp
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "Air-gapped local environment ready",
-                    fontSize = 13.sp,
-                    color = Color(0xFF888888)
-                )
-            }
-        }
-    }
-
-    // Screen 2: Text Entry & OCR Options
-    if (appState == AppState.INPUT) {
-        Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding(),
-            color = Color.Black
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 20.dp, vertical = 20.dp),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    // Status Badge Header
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50.dp))
-                            .background(Color(0xFF141414))
-                            .border(1.dp, Color(0xFF262626), RoundedCornerShape(50.dp))
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(Color.White)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (isOcrExtracting) "Extracting OCR Text..." else "Gemma 2B Engine Active",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFFCCCCCC)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    Text(
-                        text = "VerdictEdge",
-                        fontSize = 36.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        letterSpacing = (-0.5).sp
-                    )
-
-                    Text(
-                        text = "Enter text or scan a document to review",
-                        fontSize = 14.sp,
-                        color = Color(0xFF888888)
-                    )
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Text Input Area
-                    OutlinedTextField(
-                        value = contractText,
-                        onValueChange = { contractText = it },
-                        placeholder = {
-                            Text(
-                                text = if (isOcrExtracting) "Scanning text from image..." else "Paste contract clauses, terms of service, or legal agreement text here...",
-                                color = Color(0xFF555555),
-                                fontSize = 14.sp
-                            )
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = Color(0xFF101010),
-                            unfocusedContainerColor = Color(0xFF101010),
-                            focusedBorderColor = Color.White,
-                            unfocusedBorderColor = Color(0xFF262626),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
-                        )
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // OCR Actions
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                val hasPermission = ContextCompat.checkSelfPermission(
-                                    context,
-                                    Manifest.permission.CAMERA
-                                ) == PackageManager.PERMISSION_GRANTED
-
-                                if (hasPermission) {
-                                    launchFullResCamera()
-                                } else {
-                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                }
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF181818),
-                                contentColor = Color.White
-                            ),
-                            border = BorderStroke(1.dp, Color(0xFF262626))
-                        ) {
-                            Text(text = "📷 Camera", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                        }
-
-                        Button(
-                            onClick = {
-                                galleryLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF181818),
-                                contentColor = Color.White
-                            ),
-                            border = BorderStroke(1.dp, Color(0xFF262626))
-                        ) {
-                            Text(text = "🖼️ Gallery", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-                }
-
-                // Analyze CTA Button
-                Button(
-                    onClick = {
-                        if (contractText.isNotBlank()) {
-                            appState = AppState.PROCESSING_LOADING
-                        }
-                    },
-                    enabled = contractText.isNotBlank() && !isOcrExtracting,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color.Black,
-                        disabledContainerColor = Color(0xFF222222),
-                        disabledContentColor = Color(0xFF555555)
-                    )
-                ) {
-                    Text(
-                        text = "Analyze Contract",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-    }
-
-    // Screen 3: Processing Loading State
-    if (appState == AppState.PROCESSING_LOADING) {
-        LaunchedEffect(Unit) {
-            coroutineScope.launch {
-                analysisResult = contractEngine.analyzeContract(contractText)
-                appState = AppState.RESULTS
-            }
-        }
-
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = Color.Black
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(40.dp),
-                    color = Color.White,
-                    strokeWidth = 3.dp
-                )
-
-                Spacer(modifier = Modifier.height(28.dp))
-
-                Text(
-                    text = "Processing Text...",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "Evaluating clause risk factors with Gemma 2B",
-                    fontSize = 13.sp,
-                    color = Color(0xFF888888),
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-
-    // Screen 4: Results Display View
-    if (appState == AppState.RESULTS && analysisResult != null) {
-        val result = analysisResult!!
-        val scrollState = rememberScrollState()
-
-        Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding(),
-            color = Color.Black
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 20.dp, vertical = 16.dp)
-                    .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(
-                        text = "Analysis Report",
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        letterSpacing = (-0.5).sp
-                    )
-
-                    Text(
-                        text = "Local offline Gemma 2B risk evaluation",
-                        fontSize = 13.sp,
-                        color = Color(0xFF888888)
-                    )
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // Risk Badge Card
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, Color(0xFF262626), RoundedCornerShape(16.dp)),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF101010))
-                    ) {
-                        Column(modifier = Modifier.padding(20.dp)) {
-                            Text(
-                                text = "RISK FACTOR",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF888888),
-                                letterSpacing = 1.sp
-                            )
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(14.dp)
-                                        .clip(CircleShape)
-                                        .background(result.riskLevel.color)
-                                )
-
-                                Spacer(modifier = Modifier.width(10.dp))
-
-                                Text(
-                                    text = result.riskLevel.label,
-                                    fontSize = 22.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Text(
-                                text = result.riskLevel.description,
-                                fontSize = 13.sp,
-                                color = Color(0xFFCCCCCC),
-                                lineHeight = 18.sp
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Key Red Flags
-                    Text(
-                        text = "Key Points to Address",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, Color(0xFF262626), RoundedCornerShape(16.dp)),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF101010))
-                    ) {
-                        Column(modifier = Modifier.padding(20.dp)) {
-                            result.redFlags.forEachIndexed { index, flag ->
-                                Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                                    Row(verticalAlignment = Alignment.Top) {
-                                        Text(
-                                            text = "•",
-                                            color = Color.White,
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Column {
-                                            Text(
-                                                text = flag.title,
-                                                fontSize = 14.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White
-                                            )
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            Text(
-                                                text = flag.description,
-                                                fontSize = 13.sp,
-                                                color = Color(0xFFDDDDDD),
-                                                lineHeight = 18.sp
-                                            )
-                                        }
-                                    }
-                                }
-                                if (index < result.redFlags.size - 1) {
-                                    HorizontalDivider(
-                                        color = Color(0xFF1E1E1E),
-                                        modifier = Modifier.padding(vertical = 8.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Summary Block
-                    Text(
-                        text = "Summary",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, Color(0xFF262626), RoundedCornerShape(16.dp)),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF101010))
-                    ) {
-                        Column(modifier = Modifier.padding(20.dp)) {
-                            Text(
-                                text = result.summary,
-                                fontSize = 13.sp,
-                                color = Color(0xFF888888),
-                                fontFamily = FontFamily.Monospace,
-                                lineHeight = 18.sp
-                            )
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            Text(
-                                text = "The submitted document defines legal obligations between parties. Ensure appropriate caps on liabilities before signing.",
-                                fontSize = 13.sp,
-                                color = Color.White,
-                                lineHeight = 18.sp
-                            )
-                        }
-                    }
-                }
-
-                // Reset Action
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding(),
+        color = Color.Black
+    ) {
+        when (appState) {
+            AppState.INPUT -> {
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 24.dp)
+                        .fillMaxSize()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
+                    Column {
+                        Text(
+                            text = "ClauseHawk",
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            letterSpacing = (-0.5).sp
+                        )
+                        Text(
+                            text = "Offline AI Legal Contract Risk Analyzer",
+                            fontSize = 14.sp,
+                            color = Color(0xFF888888)
+                        )
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Contract Text",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFCCCCCC)
+                            )
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(
+                                    onClick = { cameraLauncher.launch(null) },
+                                    enabled = !isOcrLoading,
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, Color(0xFF333333)),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = Color.White,
+                                        disabledContentColor = Color(0xFF666666)
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    if (isOcrLoading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(12.dp),
+                                            color = Color.White,
+                                            strokeWidth = 2.dp
+                                        )
+                                    } else {
+                                        Text("📷 Camera", fontSize = 12.sp)
+                                    }
+                                }
+
+                                OutlinedButton(
+                                    onClick = { imagePickerLauncher.launch("image/*") },
+                                    enabled = !isOcrLoading,
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, Color(0xFF333333)),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = Color.White,
+                                        disabledContentColor = Color(0xFF666666)
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text("🖼️ Gallery", fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = contractText,
+                            onValueChange = { contractText = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(360.dp),
+                            placeholder = {
+                                Text(
+                                    text = "Paste full contract clauses, terms of service, or capture an image above...",
+                                    color = Color(0xFF555555),
+                                    fontSize = 14.sp
+                                )
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF101010),
+                                unfocusedContainerColor = Color(0xFF101010),
+                                focusedBorderColor = Color.White,
+                                unfocusedBorderColor = Color(0xFF262626),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                    }
+
                     Button(
                         onClick = {
-                            contractText = ""
-                            analysisResult = null
-                            appState = AppState.INPUT
+                            if (contractText.isNotBlank()) {
+                                appState = AppState.ANALYZING
+                                scope.launch {
+                                    val result = contractEngine.analyzeContract(contractText)
+                                    analysisResult = result
+                                    appState = AppState.RESULTS
+                                }
+                            }
                         },
+                        enabled = contractText.isNotBlank(),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(54.dp),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color.White,
-                            contentColor = Color.Black
+                            contentColor = Color.Black,
+                            disabledContainerColor = Color(0xFF222222),
+                            disabledContentColor = Color(0xFF555555)
                         )
                     ) {
                         Text(
-                            text = "Check More Text",
+                            text = "Analyze Contract Risk",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
             }
+
+            AppState.ANALYZING -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Text(
+                            text = "Evaluating Agreement Risk...",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Scanning for penalties & unilateral clauses",
+                            fontSize = 13.sp,
+                            color = Color(0xFF888888)
+                        )
+                    }
+                }
+            }
+
+            AppState.RESULTS -> {
+                val result = analysisResult
+                if (result != null) {
+                    if (result.isInvalid) {
+                        // UNRECOGNIZED / INVALID DOCUMENT VIEW
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(24.dp),
+                            verticalArrangement = Arrangement.SpaceBetween,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Spacer(modifier = Modifier.height(20.dp))
+
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.dp, Color(0xFF262626), RoundedCornerShape(20.dp)),
+                                shape = RoundedCornerShape(20.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF101010))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(28.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = "⚠️",
+                                        fontSize = 44.sp
+                                    )
+
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    Text(
+                                        text = "Invalid Document",
+                                        fontSize = 22.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    Text(
+                                        text = result.getSummary(selectedLanguage),
+                                        fontSize = 15.sp,
+                                        color = Color(0xFFCCCCCC),
+                                        textAlign = TextAlign.Center,
+                                        lineHeight = 22.sp
+                                    )
+                                }
+                            }
+
+                            Button(
+                                onClick = {
+                                    contractText = ""
+                                    analysisResult = null
+                                    appState = AppState.INPUT
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(54.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color.White,
+                                    contentColor = Color.Black
+                                )
+                            ) {
+                                Text(
+                                    text = when (selectedLanguage) {
+                                        AppLanguage.ENGLISH -> "Try Again"
+                                        AppLanguage.HINDI -> "पुनः प्रयास करें"
+                                        AppLanguage.KANNADA -> "ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ"
+                                    },
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    } else {
+                        // VALID CONTRACT REPORT VIEW
+                        val scrollState = rememberScrollState()
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 20.dp, vertical = 16.dp)
+                                .verticalScroll(scrollState),
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "Analysis Report",
+                                            fontSize = 28.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            letterSpacing = (-0.5).sp
+                                        )
+                                        Text(
+                                            text = "Local offline risk evaluation",
+                                            fontSize = 12.sp,
+                                            color = Color(0xFF888888)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    AppLanguage.values().forEach { language ->
+                                        FilterChip(
+                                            selected = selectedLanguage == language,
+                                            onClick = { selectedLanguage = language },
+                                            label = {
+                                                Text(
+                                                    text = language.label,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = if (selectedLanguage == language) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = Color.White,
+                                                selectedLabelColor = Color.Black,
+                                                containerColor = Color(0xFF141414),
+                                                labelColor = Color(0xFF888888)
+                                            ),
+                                            border = FilterChipDefaults.filterChipBorder(
+                                                borderColor = Color(0xFF262626),
+                                                selectedBorderColor = Color.White,
+                                                enabled = true,
+                                                selected = selectedLanguage == language
+                                            )
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(20.dp))
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(1.dp, Color(0xFF262626), RoundedCornerShape(16.dp)),
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF101010))
+                                ) {
+                                    Column(modifier = Modifier.padding(20.dp)) {
+                                        Text(
+                                            text = "RISK FACTOR",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF888888),
+                                            letterSpacing = 1.sp
+                                        )
+
+                                        Spacer(modifier = Modifier.height(12.dp))
+
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(14.dp)
+                                                    .clip(CircleShape)
+                                                    .background(result.riskLevel.color)
+                                            )
+
+                                            Spacer(modifier = Modifier.width(10.dp))
+
+                                            Text(
+                                                text = result.riskLevel.getLabel(selectedLanguage),
+                                                fontSize = 20.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Text(
+                                            text = result.riskLevel.getDescription(selectedLanguage),
+                                            fontSize = 13.sp,
+                                            color = Color(0xFFCCCCCC),
+                                            lineHeight = 18.sp
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(20.dp))
+
+                                Text(
+                                    text = when (selectedLanguage) {
+                                        AppLanguage.ENGLISH -> "Key Points to Address"
+                                        AppLanguage.HINDI -> "मुख्य जोखिम बिंदु"
+                                        AppLanguage.KANNADA -> "ಮುಖ್ಯ ಅಪಾಯದಂಶಗಳು"
+                                    },
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(1.dp, Color(0xFF262626), RoundedCornerShape(16.dp)),
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF101010))
+                                ) {
+                                    Column(modifier = Modifier.padding(20.dp)) {
+                                        result.redFlags.forEachIndexed { index, flag ->
+                                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                                Row(verticalAlignment = Alignment.Top) {
+                                                    Text(
+                                                        text = "•",
+                                                        color = Color.White,
+                                                        fontSize = 16.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Column {
+                                                        Text(
+                                                            text = flag.getTitle(selectedLanguage),
+                                                            fontSize = 14.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.White
+                                                        )
+                                                        Spacer(modifier = Modifier.height(2.dp))
+                                                        Text(
+                                                            text = flag.getDesc(selectedLanguage),
+                                                            fontSize = 13.sp,
+                                                            color = Color(0xFFDDDDDD),
+                                                            lineHeight = 18.sp
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            if (index < result.redFlags.size - 1) {
+                                                HorizontalDivider(
+                                                    color = Color(0xFF1E1E1E),
+                                                    modifier = Modifier.padding(vertical = 8.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(20.dp))
+
+                                Text(
+                                    text = when (selectedLanguage) {
+                                        AppLanguage.ENGLISH -> "Summary"
+                                        AppLanguage.HINDI -> "सारांश"
+                                        AppLanguage.KANNADA -> "ಸಾರಾಂಶ"
+                                    },
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(1.dp, Color(0xFF262626), RoundedCornerShape(16.dp)),
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF101010))
+                                ) {
+                                    Column(modifier = Modifier.padding(20.dp)) {
+                                        Text(
+                                            text = result.getSummary(selectedLanguage),
+                                            fontSize = 13.sp,
+                                            color = Color(0xFFCCCCCC),
+                                            fontFamily = FontFamily.Default,
+                                            lineHeight = 18.sp
+                                        )
+                                    }
+                                }
+                            }
+
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 24.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        contractText = ""
+                                        analysisResult = null
+                                        appState = AppState.INPUT
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(54.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color.White,
+                                        contentColor = Color.Black
+                                    )
+                                ) {
+                                    Text(
+                                        text = when (selectedLanguage) {
+                                            AppLanguage.ENGLISH -> "Check More Text"
+                                            AppLanguage.HINDI -> "दूसरा अनुबंध जांचें"
+                                            AppLanguage.KANNADA -> "ಮತ್ತೊಂದು ಒಪ್ಪಂದ ಪರಿಶೀಲಿಸಿ"
+                                        },
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
-}
-
-@Composable
-fun MonochromeTheme(content: @Composable () -> Unit) {
-    val darkColorScheme = darkColorScheme(
-        primary = Color.White,
-        onPrimary = Color.Black,
-        background = Color.Black,
-        surface = Color(0xFF101010),
-        onSurface = Color.White,
-        onSurfaceVariant = Color(0xFF888888),
-        outline = Color(0xFF262626)
-    )
-
-    val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = Color.Black.toArgb()
-            window.navigationBarColor = Color.Black.toArgb()
-            val insetsController = WindowCompat.getInsetsController(window, view)
-            insetsController.isAppearanceLightStatusBars = false
-            insetsController.isAppearanceLightNavigationBars = false
-        }
-    }
-
-    MaterialTheme(
-        colorScheme = darkColorScheme,
-        content = content
-    )
 }

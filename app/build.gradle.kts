@@ -49,11 +49,10 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
 
-    // MediaPipe GenAI for Offline Gemma 2B
-    implementation("com.google.mediapipe:tasks-genai:0.10.14")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    // ML Kit Text Recognition (Supported Scripts Only)
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
 
-    // ML Kit On-Device OCR for Camera / Image Scanning
-
-    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+    // Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 }
