@@ -1,170 +1,147 @@
 package com.example.clausehawk
 
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class ContractEngine {
 
-    suspend fun analyzeContract(text: String): AnalysisResult {
-        delay(1000L)
-        val cleanText = text.trim()
+    suspend fun analyzeContract(text: String): AnalysisResult = withContext(Dispatchers.Default) {
+        val trimmed = text.trim()
+        val lowerText = trimmed.lowercase()
 
-        // 1. BASIC LENGTH & GIBBERISH CHECK
-        if (isGibberishOrInvalid(cleanText)) {
-            return buildNonContractResult()
+        // 1. Check for Gibberish / Invalid Text
+        if (trimmed.length < 15 || !containsMeaningfulWords(trimmed)) {
+            return@withContext AnalysisResult(
+                riskLevel = RiskLevel.LOW,
+                summaryEn = "Invalid input or gibberish text detected. Please provide clear legal or contract text.",
+                summaryHi = "अमान्य इनपुट या निरर्थक पाठ पाया गया। कृपया स्पष्ट कानूनी या अनुबंध पाठ प्रदान करें।",
+                summaryKn = "ಅಮಾನ್ಯ ಇನ್‌ಪುಟ್ ಅಥವಾ ಅರ್ಥವಿಲ್ಲದ ಪಠ್ಯ ಪತ್ತೆಯಾಗಿದೆ. ದಯವಿಟ್ಟು ಸ್ಪಷ್ಟ ಕಾನೂನು ಪಠ್ಯವನ್ನು ಒದಗಿಸಿ.",
+                redFlags = emptyList(),
+                isInvalid = true
+            )
         }
 
-        // 2. LEGAL CONTRACT RELEVANCE CHECK
-        if (!containsLegalKeywords(cleanText)) {
-            return buildNonContractResult()
+        val redFlags = mutableListOf<RedFlag>()
+
+        // Keywords in EN, HI, KN
+        val highRiskKeywords = listOf(
+            "indemnify", "indemnity", "unilateral", "terminate without cause",
+            "non-compete", "arbitration", "penalty", "liable for all damages",
+            "exclusive jurisdiction", "वाध्य", "हरजाना", "ಬಂಧನಕಾರಿ", "ದಂಡ"
+        )
+
+        val mediumRiskKeywords = listOf(
+            "auto-renew", "automatic renewal", "confidentiality", "intellectual property",
+            "governing law", "notice period", "amendment", "गोपनीयता", "ಖಾಸಗಿತನ"
+        )
+
+        var highCount = 0
+        var mediumCount = 0
+
+        for (keyword in highRiskKeywords) {
+            if (lowerText.contains(keyword)) highCount++
         }
 
-        val flags = mutableListOf<RedFlag>()
-
-        // 3. PROMPT INJECTION
-        val injectionPatterns = listOf("ignore all previous", "ignore previous", "processing agent", "classify this document", "पिछले निर्देशों", "ಹಿಂದಿನ ಸೂಚನೆಗಳನ್ನು")
-        var hasInjection = false
-        for (pattern in injectionPatterns) {
-            if (cleanText.contains(pattern, ignoreCase = true)) {
-                hasInjection = true
-                flags.add(
-                    RedFlag(
-                        titleEn = "Adversarial Prompt Injection",
-                        titleHi = "प्रॉम्प्ट इंजेक्शन (एआई हेरफेर)",
-                        titleKn = "ವಿರೋಧಾತ್ಮಕ ಪ್ರಾಂಪ್ಟ್ ಇಂಜೆಕ್ಷನ್",
-                        descEn = "Contains hidden text attempting to manipulate automated risk scoring.",
-                        descHi = "इसमें स्वचालित जोखिम विश्लेषण में हेरफेर करने वाला पाठ शामिल है।",
-                        descKn = "ಸ್ವಯಂಚಾಲಿತ ಅಪಾಯದ ಅಂಕಗಳನ್ನು ಮ್ಯಾನಿಪುಲೇಟ್ ಮಾಡಲು ಯತ್ನಿಸುವ ಅಡಗಿಸಲಾದ ಪಠ್ಯವನ್ನು ಹೊಂದಿದೆ."
-                    )
-                )
-                break
-            }
+        for (keyword in mediumRiskKeywords) {
+            if (lowerText.contains(keyword)) mediumCount++
         }
 
-        // 4. LIQUIDATED DAMAGES / RECURRING FINES
-        val dailyPenaltyPattern = Regex("""(per\s+calendar\s+day|per\s+day|/day|प्रति\s+दिन|दैनिक|ಪ್ರತಿದಿನ|ದಿನಕ್ಕೆ)""", RegexOption.IGNORE_CASE)
-        val liquidatedDamagesPattern = Regex("""(liquidated\s+damages|हर्जाना|जुर्माना|ನಷ್ಟ\s*ಪರಿಹಾರ|ದಂಡ)""", RegexOption.IGNORE_CASE)
-        val currencyPattern = Regex("""(\$\s*[\d,]+|₹\s*[\d,]+|Rs\.?\s*[\d,]+|INR\s*[\d,]+)""", RegexOption.IGNORE_CASE)
-
-        val isDailyPenalty = dailyPenaltyPattern.containsMatchIn(cleanText)
-        val hasLiquidatedDamages = liquidatedDamagesPattern.containsMatchIn(cleanText)
-        val hasCurrencyAmount = currencyPattern.containsMatchIn(cleanText)
-
-        var hasExtremePenalty = false
-        if (hasLiquidatedDamages || (isDailyPenalty && hasCurrencyAmount)) {
-            hasExtremePenalty = true
-            flags.add(
+        // Clause Flag Matching
+        if (lowerText.contains("indemnif") || lowerText.contains("liable") || lowerText.contains("हरजाना") || lowerText.contains("ದಂಡ")) {
+            redFlags.add(
                 RedFlag(
-                    titleEn = "Severe Liquidated Damages / Daily Fines",
-                    titleHi = "गंभीर दैनिक जुर्माना / हर्जाना",
-                    titleKn = "ತೀವ್ರ ನಿರ್ಧರಿತ ನಷ್ಟ ಪರಿಹಾರ / ದಿನನಿತ್ಯದ ದಂಡ",
-                    descEn = "Imposes heavy recurring financial penalties or daily fine accrual upon breach.",
-                    descHi = "उल्लंघन पर भारी दैनिक जुर्माना या आवर्ती वित्तीय दंड लगाता है।",
-                    descKn = "ಒಪ್ಪಂದ ಉಲ್ಲಂಘನೆಯಾದರೆ ಭಾರೀ ಪುನರಾವರ್ತಿತ ಆರ್ಥಿಕ ದಂಡ ಅಥವಾ ದಿನನಿತ್ಯದ ದಂಡವನ್ನು ವಿಧಿಸುತ್ತದೆ."
+                    titleEn = "Unbalanced Indemnification & Liability",
+                    titleHi = "असंतुलित क्षतिपूर्ति और देनदारी",
+                    titleKn = "ಅಸಮತೋಲಿತ ನಷ್ಟ ಪರಿಹಾರ ಮತ್ತು ಜವಾಬ್ದಾರಿ",
+                    descEn = "The agreement contains terms shifting legal liability or obligation to protect the other party unconditionally.",
+                    descHi = "समझौते में बिना शर्त दूसरी पार्टी की रक्षा करने या कानूनी दायित्व स्थानांतरित करने की शर्तें शामिल हैं।",
+                    descKn = "ಒಪ್ಪಂದವು ಇತರ ಪಕ್ಷವನ್ನು ಶರತ್ತಿಲ್ಲದೆ ರಕ್ಷಿಸುವ ಅಥವಾ ಕಾನೂನು ಜವಾಬ್ದಾರಿಯನ್ನು ವರ್ಗಾಯಿಸುವ ನಿಯಮಗಳನ್ನು ಹೊಂದಿದೆ."
                 )
             )
         }
 
-        // 5. UNILATERAL ENFORCEMENT
-        val unilateralPattern = Regex("""(sole\s+satisfaction|suspicion\s+of\s+a\s+breach|sole\s+discretion|केवल\s+संतुष्टि|संदेह|ಏಕಪಕ್ಷೀಯ)""", RegexOption.IGNORE_CASE)
-        if (unilateralPattern.containsMatchIn(cleanText)) {
-            flags.add(
+        if (lowerText.contains("terminate") || lowerText.contains("cancellation") || lowerText.contains("रद्द")) {
+            redFlags.add(
                 RedFlag(
-                    titleEn = "Unilateral & Subjective Enforcement",
-                    titleHi = "एकतरफा और मनमाना प्रवर्तन",
-                    titleKn = "ಏಕಪಕ್ಷೀಯ ಮತ್ತು ಸ್ವಯಂನಿರ್ಣಯದ ಜಾರಿ",
-                    descEn = "Penalties trigger immediately upon suspicion or sole discretion without proof.",
-                    descHi = "बिना किसी सबूत के केवल संदेह के आधार पर जुर्माना लगाया जा सकता है।",
-                    descKn = "ಯಾವುದೇ ಸಾಕ್ಷ್ಯಾಧಾರವಿಲ್ಲದೆ ಕೇವಲ ಸಂಶಯ ಅಥವಾ ಸ್ವಂತ ವಿವೇಚನೆಯ ಆಧಾರದ ಮೇಲೆ ತಕ್ಷಣವೇ ದಂಡ ವಿಧಿಸಲಾಗುತ್ತದೆ."
+                    titleEn = "Unilateral Termination Rights",
+                    titleHi = "एकपक्षीय समाप्ति अधिकार",
+                    titleKn = "ಏಕಪಕ್ಷೀಯ ರದ್ದತಿ ಹಕ್ಕುಗಳು",
+                    descEn = "Provisions allow contract cancellation without mutual agreement or explicit cause.",
+                    descHi = "प्रावधान बिना आपसी सहमति या स्पष्ट कारण के अनुबंध रद्द करने की अनुमति देते हैं।",
+                    descKn = "ಪರಸ್ಪರ ಸಮ್ಮತಿ ಅಥವಾ ನಿರ್ದಿಷ್ಟ ಕಾರಣವಿಲ್ಲದೆ ಒಪ್ಪಂದವನ್ನು ರದ್ದುಗೊಳಿಸಲು ಈ ನಿಯಮಗಳು ಅನುಮತಿಸುತ್ತವೆ."
                 )
             )
         }
 
-        // 6. INDEMNIFICATION
-        val indemnityPattern = Regex("""(indemnify|indemnification|क्षतिपूर्ति|दायित्व|ನಷ್ಟ\s*ಪರಿಹಾರ|ಹೊಣೆಗಾರಿಕೆ)""", RegexOption.IGNORE_CASE)
-        if (indemnityPattern.containsMatchIn(cleanText)) {
-            flags.add(
+        if (lowerText.contains("non-compete") || lowerText.contains("exclusiv")) {
+            redFlags.add(
                 RedFlag(
-                    titleEn = "Indemnification Obligations",
-                    titleHi = "क्षतिपूर्ति और कानूनी बचाव का बोझ",
-                    titleKn = "ನಷ್ಟ ಪರಿಹಾರ ಬಾಧ್ಯತೆಗಳು",
-                    descEn = "Shifts legal defense costs and liabilities onto the receiving party.",
-                    descHi = "कानूनी बचाव लागत और देनदारियों को दूसरी पार्टी पर स्थानांतरित करता है।",
-                    descKn = "ಕಾನೂನು ಸಮರ್ಥನೆ ವೆಚ್ಚಗಳು ಮತ್ತು ಹೊಣೆಗಾರಿಕೆಗಳನ್ನು ಸ್ವೀಕರಿಸುವ ಪಾರ್ಟಿಯ ಮೇಲೆ ವರ್ಗಾಯಿಸುತ್ತದೆ."
+                    titleEn = "Restrictive Covenants",
+                    titleHi = "प्रतिबंधात्मक शर्तें",
+                    titleKn = "ನಿಯಂತ್ರಣ ಶರತ್ತುಗಳು",
+                    descEn = "Contains non-compete or strict exclusivity restrictions limiting future operational scope.",
+                    descHi = "गैर-प्रतिस्पर्धा या सख्त विशिष्टता प्रतिबंध शामिल हैं जो भविष्य के काम को सीमित करते हैं।",
+                    descKn = "ಭವಿಷ್ಯದ ಕೆಲಸಗಳನ್ನು ಮಿತಿಗೊಳಿಸುವ ಸ್ಪರ್ಧಾತ್ಮಕವಲ್ಲದ ಅಥವಾ ಕಟ್ಟುನಿಟ್ಟಾದ ನಿರ್ಬಂಧಗಳನ್ನು ಹೊಂದಿದೆ."
                 )
             )
         }
 
-        // 7. CALCULATE RISK
+        if (lowerText.contains("auto-renew") || lowerText.contains("renew")) {
+            redFlags.add(
+                RedFlag(
+                    titleEn = "Automatic Renewal Clause",
+                    titleHi = "ऑटोमैटिक नवीनीकरण क्लॉज",
+                    titleKn = "ಸ್ವಯಂಚಾಲಿತ ನವೀಕರಣ ಶರತ್ತು",
+                    descEn = "The contract automatically extends unless explicit cancellation notice is served in time.",
+                    descHi = "समय पर रद्द करने की सूचना न देने पर अनुबंध अपने आप आगे बढ़ जाएगा।",
+                    descKn = "ಸಮಯಕ್ಕೆ ಸರಿಯಾಗಿ ರದ್ದತಿ ಸೂಚನೆ ನೀಡದಿದ್ದರೆ ಒಪ್ಪಂದವು ಸ್ವಯಂಚಾಲಿತವಾಗಿ ವಿಸ್ತರಿಸಲ್ಪಡುತ್ತದೆ."
+                )
+            )
+        }
+
+        if (redFlags.isEmpty()) {
+            redFlags.add(
+                RedFlag(
+                    titleEn = "Standard Terms Identified",
+                    titleHi = "मानक शर्तें पाई गईं",
+                    titleKn = "ಸಾಮಾನ್ಯ ನಿಯಮಗಳನ್ನು ಗುರುತಿಸಲಾಗಿದೆ",
+                    descEn = "General contract terms detected with no major unilateral liability restrictions.",
+                    descHi = "बिना किसी बड़े एकपक्षीय दायित्व के सामान्य अनुबंध शर्तें पाई गईं।",
+                    descKn = "ಯಾವುದೇ ಪ್ರಮುಖ ಏಕಪಕ್ಷೀಯ ಜವಾಬ್ದಾರಿ ಇಲ್ಲದೆ ಸಾಮಾನ್ಯ ಒಪ್ಪಂದದ ನಿಯಮಗಳು ಕಂಡುಬಂದಿವೆ."
+                )
+            )
+        }
+
         val riskLevel = when {
-            hasInjection || hasExtremePenalty -> RiskLevel.HIGH
-            flags.any { it.titleEn.contains("Unilateral") } -> RiskLevel.HIGH
-            flags.size >= 3 -> RiskLevel.HIGH
-            flags.isNotEmpty() -> RiskLevel.MEDIUM
+            highCount >= 2 || redFlags.size >= 3 -> RiskLevel.HIGH
+            highCount == 1 || mediumCount >= 1 -> RiskLevel.MEDIUM
             else -> RiskLevel.LOW
         }
 
-        if (flags.isEmpty()) {
-            flags.add(
-                RedFlag(
-                    titleEn = "Standard Boilerplate Terms",
-                    titleHi = "मानक कानूनी शर्तें",
-                    titleKn = "ಸಾಮಾನ್ಯ ಪ್ರಮಾಣಿತ ಶರತ್ತುಗಳು",
-                    descEn = "Balanced agreement with no unusual financial penalty clauses found.",
-                    descHi = "बिना किसी असामान्य वित्तीय दंड के संतुलित समझौता।",
-                    descKn = "ಯಾವುದೇ ಅಸಾಧಾರಣ ಆರ್ಥಿಕ ದಂಡದ ನಿಯಮಗಳಿಲ್ಲದ ಸಮತೋಲಿತ ಒಪ್ಪಂದ."
-                )
-            )
-        }
-
-        return AnalysisResult(
+        AnalysisResult(
             riskLevel = riskLevel,
-            summaryEn = "Scanned ${cleanText.length} chars. " + when(riskLevel) {
-                RiskLevel.HIGH -> "CRITICAL RISK: High-risk financial penalties, prompt injections, or subjective enforcement found."
-                RiskLevel.MEDIUM -> "MODERATE RISK: Operational clauses requiring standard review."
-                RiskLevel.LOW -> "LOW RISK: Standard balanced legal agreement."
+            summaryEn = when (riskLevel) {
+                RiskLevel.HIGH -> "High-risk terms identified. Review indemnity, liability caps, and termination rights carefully."
+                RiskLevel.MEDIUM -> "Moderate terms detected. Standard clauses present; ensure notice periods are acceptable."
+                RiskLevel.LOW -> "Standard legal terms detected. Agreement appears balanced."
             },
-            summaryHi = "${cleanText.length} अक्षरों का विश्लेषण किया गया। " + when(riskLevel) {
-                RiskLevel.HIGH -> "गंभीर जोखिम: इसमें अत्यधिक जुर्माना, प्रॉम्प्ट इंजेक्शन या एकतरफा शर्तें मिली हैं।"
-                RiskLevel.MEDIUM -> "मध्यम जोखिम: सामान्य समीक्षा की आवश्यकता वाले प्रावधान।"
-                RiskLevel.LOW -> "कम जोखिम: मानक संतुलित कानूनी समझौता।"
+            summaryHi = when (riskLevel) {
+                RiskLevel.HIGH -> "उच्च जोखिम वाली शर्तें पाई गईं। क्षतिपूर्ति और समाप्ति अधिकारों की ध्यान से समीक्षा करें।"
+                RiskLevel.MEDIUM -> "मध्यम शर्तें पाई गईं। सुनिश्चित करें कि नोटिस अवधि स्वीकार्य है।"
+                RiskLevel.LOW -> "मानक कानूनी शर्तें पाई गईं। समझौता संतुलित प्रतीत होता है।"
             },
-            summaryKn = "${cleanText.length} ಅಕ್ಷರಗಳನ್ನು ಸ್ಕ್ಯಾನ್ ಮಾಡಲಾಗಿದೆ. " + when(riskLevel) {
-                RiskLevel.HIGH -> "ಗಂಭೀರ ಅಪಾಯ: ಹೆಚ್ಚಿನ ಅಪಾಯದ ಆರ್ಥಿಕ ದಂಡಗಳು, ಪ್ರಾಂಪ್ಟ್ ಇಂಜೆಕ್ಷನ್‌ಗಳು ಅಥವಾ ಏಕಪಕ್ಷೀಯ ಜಾರಿ ಕಂಡುಬಂದಿದೆ."
-                RiskLevel.MEDIUM -> "ಮಧ್ಯಮ ಅಪಾಯ: ಸಾಮಾನ್ಯ ಪರಿಶೀಲನೆಯ ಅಗತ್ಯವಿರುವ ಕಾರ್ಯಾಚರಣೆಯ ನಿಯಮಗಳು."
-                RiskLevel.LOW -> "ಕಡಿಮೆ ಅಪಾಯ: ಸಾಮಾನ್ಯ ಸಮತೋಲಿತ ಕಾನೂನು ಒಪ್ಪಂದ."
+            summaryKn = when (riskLevel) {
+                RiskLevel.HIGH -> "ಹೆಚ್ಚಿನ ಅಪಾಯದ ನಿಯಮಗಳು ಕಂಡುಬಂದಿವೆ. ಪರಿಹಾರ ಮತ್ತು ರದ್ದತಿ ಹಕ್ಕುಗಳನ್ನು ಎಚ್ಚರಿಕೆಯಿಂದ ಪರಿಶೀಲಿಸಿ."
+                RiskLevel.MEDIUM -> "ಮಧ್ಯಮ ನಿಯಮಗಳು ಕಂಡುಬಂದಿವೆ. ಸೂಚನಾ ಅವಧಿ ಸ್ವೀಕಾರಾರ್ಹವಾಗಿದೆ ಎಂದು ಖಚಿತಪಡಿಸಿಕೊಳ್ಳಿ."
+                RiskLevel.LOW -> "ಸಾಮಾನ್ಯ ಕಾನೂನು ನಿಯಮಗಳು ಕಂಡುಬಂದಿವೆ. ಒಪ್ಪಂದವು ಸಮತೋಲಿತವಾಗಿದೆ."
             },
-            redFlags = flags,
+            redFlags = redFlags,
             isInvalid = false
         )
     }
 
-    private fun isGibberishOrInvalid(text: String): Boolean {
-        if (text.length < 25) return true
-        val words = text.split(Regex("""\s+""")).filter { it.isNotBlank() }
-        if (words.size < 4) return true
-        val avgWordLength = text.length.toDouble() / words.size
-        return avgWordLength > 22.0 || avgWordLength < 1.8
-    }
-
-    private fun containsLegalKeywords(text: String): Boolean {
-        val legalKeywords = listOf(
-            "agreement", "contract", "party", "parties", "clause", "shall", "terms",
-            "conditions", "liability", "breach", "termination", "indemnify", "penalty",
-            "damages", "governing", "law", "jurisdiction", "confidential", "section",
-            "अनुबंध", "शर्त", "दस्तावेज़", "जुर्माना", "दायित्व",
-            "ಒಪ್ಪಂದ", "ಶರತ್ತು", "ನಿಯಮಗಳು", "ಹೊಣೆಗಾರಿಕೆ", "ದಂಡ"
-        )
-        return legalKeywords.any { text.contains(it, ignoreCase = true) }
-    }
-
-    private fun buildNonContractResult(): AnalysisResult {
-        return AnalysisResult(
-            riskLevel = RiskLevel.LOW,
-            summaryEn = "Please upload an image with an agreement.",
-            summaryHi = "कृपया एक वैध अनुबंध या समझौते की छवि अपलोड करें।",
-            summaryKn = "ದಯವಿಟ್ಟು ಒಪ್ಪಂದವನ್ನು ಹೊಂದಿರುವ ಚಿತ್ರವನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ.",
-            redFlags = emptyList(),
-            isInvalid = true
-        )
+    private fun containsMeaningfulWords(text: String): Boolean {
+        val vowelsAndConsonants = Regex("[a-zA-Z\\u0900-\\u097F\\u0C80-\\u0CFF]")
+        return vowelsAndConsonants.containsMatchIn(text)
     }
 }
